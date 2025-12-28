@@ -67,6 +67,7 @@ nav2-msgs==1.1.19
 nav2-simple-commander==1.0.0
 numpy==1.26.0
 octomap-msgs==2.0.1
+opencv-python==4.12.0.88
 osrf-pycommon==2.1.6
 pcl-msgs==1.0.0
 pendulum-msgs==0.20.6
@@ -140,6 +141,7 @@ rqt-tf-tree==1.0.5
 rqt-topic==1.5.0
 rtabmap-msgs==0.22.1
 rtabmap-python==0.1.0
+scipy==1.15.3
 sensor-msgs==4.9.0
 sensor-msgs-py==4.9.0
 setuptools==80.9.0
