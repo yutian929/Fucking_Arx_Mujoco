@@ -9,3 +9,6 @@ cd ../../../
 cd SDK/R5/py/ARX_R5_python/bimanual/
 mkdir -p build && cd build && cmake .. && make && make install
 cd ../../../../../../
+cd SDK/R5/py/ARX_R5_python/
+conda env config vars set PYTHONPATH="$PWD:$PYTHONPATH"
+cd ../../../

@@ -8,6 +8,7 @@ import cv2
 import pyrealsense2 as rs
 from scipy.spatial.transform import Rotation as R
 from scipy.optimize import least_squares
+import os  # 新增
 
 # =========================
 # 1) ArUco 参数（按你的）
@@ -213,7 +214,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
     print("\n========================================")
     print("  机械臂进入【重力补偿模式】(free-drag)")
     print("  请用手拖动机械臂到不同姿态采样")
-    print("  按键：S=保存样本  C=解算  Q=退出")
+    print("  按键：SPACE=保存样本  S=保存图片  C=解算  Q=退出")
     print("========================================\n")
 
     print("Starting RealSense D435...")
@@ -287,7 +288,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
 
             # --- 叠字（只做 text overlay） ---
             lines = [
-                f"samples={len(B_list)}   [S]save  [C]calib  [Q]quit",
+                f"samples={len(B_list)}   [SPACE]save  [S]screenshot  [C]calib  [Q]quit",
                 f"aruco(ID={MARKER_ID})={'OK' if found else 'NO'}",
             ]
             if last_ee is not None:
@@ -313,7 +314,8 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
             if key in [ord('q'), ord('Q')]:
                 break
 
-            if key in [ord('s'), ord('S')]:
+            # 按空格键保存样本数据
+            if key == ord(' '):
                 if not found:
                     print("[WARN] 没看到目标 ArUco，无法保存。")
                     continue
@@ -326,9 +328,18 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
                 B_list.append(B)
                 print(f"[OK] saved #{len(B_list)}  ee={np.round(last_ee,4)}  tvec={np.round(tvec_sel,4)}")
 
+            # 按's'键保存当前可视化图片
+            if key in [ord('s'), ord('S')]:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                img_filename = f"calib_screenshot_annotated_{timestamp}.png"
+                cv2.imwrite(img_filename, vis)
+                img_filename = f"calib_screenshot_raw_{timestamp}.png"
+                cv2.imwrite(img_filename, img)
+                print(f"[OK] Screenshot saved: {img_filename}")
+
             if key in [ord('c'), ord('C')]:
                 if len(B_list) < 10:
-                    print("[WARN] 样本太少：至少10帧，建议20~40帧。")
+                    print(f"[WARN] 样本太少({len(B_list)}张)：至少需要10帧，无法计算。")
                     continue
 
                 print("\n[INFO] Solving (auto-try pose convention)...")
@@ -341,9 +352,6 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
                 print("\n=== Y = T_flange_marker (marker on flange) ===\n", Y)
                 
                 # --- 计算 T_base_link ---
-                # X 是 T_base_optical
-                # 关系: T_base_optical = T_base_link @ T_link_optical
-                # 所以: T_base_link = T_base_optical @ inv(T_link_optical)
                 T_link_optical = get_T_link_optical()
                 T_base_link = X @ np.linalg.inv(T_link_optical)
                 print("\n=== T_base_link (camera_link -> base) ===\n", T_base_link)
