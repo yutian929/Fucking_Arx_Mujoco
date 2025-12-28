@@ -140,6 +140,20 @@ class Real2Sim:
         Returns:
             Real2SimResult 包含rgb, mask, 关节角度等信息
         """
+        # 检查输入是否包含 nan
+        if np.isnan(T_camlink_ee).any():
+            if self.verbose:
+                print("[Real2Sim] Warning: T_camlink_ee contains nan, skipping frame.")
+            H, W = self.height, self.width
+            return Real2SimResult(
+                rgb=np.zeros((H, W, 3), dtype=np.uint8),
+                mask=np.zeros((H, W), dtype=np.uint8),
+                joint_angles=np.zeros(6),
+                T_world_flange=np.eye(4),
+                T_world_gripper=np.eye(4),
+                ik_success=False
+            )
+        
         # 转换到世界坐标系
         T_world_ee = self.T_world_camlink @ T_camlink_ee
         
