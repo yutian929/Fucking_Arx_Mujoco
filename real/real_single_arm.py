@@ -38,9 +38,25 @@ class RealSingleArm:
     """
     
     def __init__(self, can_port: str = 'can0', arm_type: int = 0, 
-                 calib_path: str = "gripper_calibration.json"):
-        self.config = {"can_port": can_port, "type": arm_type}
-        print(f"[RealSingleArm] Connecting on {can_port}...")
+                 calib_path: str = "gripper_calibration.json",
+                 max_velocity: int = 200, max_acceleration: int = 500):
+        """
+        初始化单臂控制器
+        
+        Args:
+            can_port: CAN端口名称
+            arm_type: 机械臂类型ID
+            calib_path: 夹爪校准文件路径
+            max_velocity: 最大速度 (50-500，越小越慢)
+            max_acceleration: 最大加速度 (100-2000，越小越平滑)
+        """
+        self.config = {
+            "can_port": can_port, 
+            "type": arm_type,
+            "max_velocity": max_velocity,
+            "max_acceleration": max_acceleration
+        }
+        print(f"[RealSingleArm] Connecting on {can_port}, vel={max_velocity}, acc={max_acceleration}")
         self.arm = SingleArm(self.config)
         self.calib_points = self._load_calibration(calib_path)
     
@@ -72,6 +88,16 @@ class RealSingleArm:
             if r1 <= real_mm <= r2 and abs(r2 - r1) > 1e-6:
                 return s1 + (real_mm - r1) / (r2 - r1) * (s2 - s1)
         return pts[-1][1]
+    
+    def set_speed(self, max_velocity: int = 200, max_acceleration: int = 500):
+        """
+        设置运动速度和加速度
+        
+        Args:
+            max_velocity: 最大速度 (建议50-500)
+            max_acceleration: 最大加速度 (建议100-2000)
+        """
+        self.arm.set_speed(max_velocity, max_acceleration)
     
     # ==================== 坐标变换工具 ====================
     
@@ -205,17 +231,20 @@ class RealSingleArm:
 
 
 if __name__ == "__main__":
-    arm = RealSingleArm(can_port='can1')
+    # 使用较慢的速度初始化
+    arm = RealSingleArm(can_port='can1', max_velocity=100, max_acceleration=300)
     
     print("Current flange pose (T_flange_init_flange):\n", arm.get_flange_pose())
-    print("Current gripper pose (T_flange_init_gripper):\n", arm.get_gripper_pose())
     
-    # 测试：在flange_init坐标系下的目标位姿
+    # 测试前可以再降低速度
+    arm.set_speed(100, 300)  # 非常慢
+    
     target = np.eye(4)
     target[:3, 3] = [0.3, 0.0, 0.15]
     
-    print("Moving to target...")
+    print("Moving to target (slow)...")
     arm.move_to(target, gripper_width_mm=40.0, is_gripper_pose=True)
-    time.sleep(30)
+    time.sleep(10)
     
     arm.go_home()
+    time.sleep(5)
