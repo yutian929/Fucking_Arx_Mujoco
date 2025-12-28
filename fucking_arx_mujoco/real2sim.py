@@ -9,8 +9,8 @@ from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
 from scipy.spatial.transform import Rotation as R
 import bimanual
-from sim.mujoco_single_arm import MujocoSingleArm
-from real.camera.camera_utils import load_eye_to_hand_matrix, load_camera_intrinsics
+from .sim.mujoco_single_arm import MujocoSingleArm
+from .real.camera.camera_utils import load_eye_to_hand_matrix, load_camera_intrinsics
 
 @dataclass
 class Real2SimResult:
