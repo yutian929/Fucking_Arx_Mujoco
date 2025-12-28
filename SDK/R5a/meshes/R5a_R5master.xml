@@ -2,6 +2,10 @@
   <compiler angle="radian"/>
 
   <asset>
+    <!-- 棋盘格纹理 -->
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="8 8" texuniform="true" reflectance=".2"/>
+
     <mesh name="base_link" content_type="model/stl" file="base_link.STL"/>
     <mesh name="link1" content_type="model/stl" file="link1.STL"/>
     <mesh name="link2" content_type="model/stl" file="link2.STL"/>
@@ -14,6 +18,21 @@
   </asset>
 
   <worldbody>
+    <!-- 光照 -->
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    
+    <!-- 棋盘格地面 -->
+    <!-- <geom name="floor" type="plane" size="2 2 0.1" material="grid"/> -->
+    
+    <!-- 可动态设置位姿的渲染相机 -->
+    <camera name="render_camera" pos="0.0 0.0 0.0" xyaxes="0 -1 0 0 0 1" fovy="60"/>
+    
+    <!-- 目标标记点（mocap，可选） -->
+    <body name="target_marker" mocap="true" pos="0.0 0.0 0.0">
+      <geom type="sphere" size="0.01" rgba="1 0 0 0.7" contype="0" conaffinity="0"/>
+    </body>
+    
+    <!-- 机械臂 -->
     <geom type="mesh" rgba="0.89804 0.91765 0.92941 1" mesh="base_link"/>
     <body name="link1" pos="0 0 0.0565">
       <inertial pos="0.005056 -0.0078534 0.020887" quat="0.632157 0.714526 -0.263733 0.142391" mass="0.09728" diaginertia="0.000118945 9.40205e-05 4.70346e-05"/>

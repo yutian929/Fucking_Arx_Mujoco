@@ -1,24 +1,57 @@
 import os
 import cv2
+import json
 import numpy as np
 from typing import List, Optional
+from scipy.spatial.transform import Rotation as R
 from real.camera.aruco_utils import detect_aruco, draw_aruco, ArucoResult
-from real.camera.camera_utils import load_camera_intrinsics
+from real.camera.camera_utils import load_camera_intrinsics, load_eye_to_hand_matrix, T_optical_to_link
+from sim.mujoco_single_arm import MujocoSingleArm
+import bimanual
+
+
+def T_to_xyzrpy(T: np.ndarray) -> np.ndarray:
+    """将4x4变换矩阵转换为 [x, y, z, roll, pitch, yaw]"""
+    pos = T[:3, 3]
+    rot = R.from_matrix(T[:3, :3])
+    rpy = rot.as_euler('xyz', degrees=False)
+    return np.concatenate([pos, rpy])
+
+
+def xyzrpy_to_T(xyzrpy: np.ndarray) -> np.ndarray:
+    """将 [x, y, z, roll, pitch, yaw] 转换为4x4变换矩阵"""
+    T = np.eye(4, dtype=np.float64)
+    T[:3, 3] = xyzrpy[:3]
+    T[:3, :3] = R.from_euler('xyz', xyzrpy[3:], degrees=False).as_matrix()
+    return T
 
 
 if __name__ == "__main__":
     # =========================
-    # 直接设定参数
+    # 参数设定
     # =========================
-    IMAGE_PATH = "assert/calib_screenshot_raw_20251228_091850.png"  # 输入图片路径
-    CAMERA_INTRINSICS_PATH = "real/camera/camera_intrinsics_d435i.json"  # 相机内参JSON文件路径
-    MARKER_SIZE = 0.05             # Marker边长(米)
-    TARGET_MARKER_ID = 0           # 指定检测的marker ID，None表示检测所有
+    IMAGE_PATH = "assert/calib_screenshot_raw_20251228_091850.png"
+    CAMERA_INTRINSICS_PATH = "real/camera/camera_intrinsics_d435i.json"
+    EYE_TO_HAND_LEFT_PATH = "real/camera/eye_to_hand_result_left_latest.json"
+    EYE_TO_HAND_RIGHT_PATH = "real/camera/eye_to_hand_result_right_latest.json"
+    XML_PATH = "SDK/R5a/meshes/R5a_R5master.xml"
     
-    _, K, dist = load_camera_intrinsics(CAMERA_INTRINSICS_PATH)
+    MARKER_SIZE = 0.05
+    TARGET_MARKER_ID = 0
     
     # =========================
-    # 读取图片
+    # 加载相机内参和手眼标定
+    # =========================
+    _, K, dist, v_fov = load_camera_intrinsics(CAMERA_INTRINSICS_PATH)
+    T_flange_init_L_camlink = load_eye_to_hand_matrix(EYE_TO_HAND_LEFT_PATH)   # 左臂标定结果
+    T_flange_init_R_camlink = load_eye_to_hand_matrix(EYE_TO_HAND_RIGHT_PATH)  # 右臂标定结果
+    
+    print(f"[INFO] 相机内参:\n{K}")
+    print(f"\n[INFO] T_flange_init_L_camlink (相机link在左臂初始法兰坐标系下):\n{T_flange_init_L_camlink}")
+    print(f"\n[INFO] T_flange_init_R_camlink (相机link在右臂初始法兰坐标系下):\n{T_flange_init_R_camlink}")
+    
+    # =========================
+    # 读取图片并检测ArUco
     # =========================
     if not os.path.exists(IMAGE_PATH):
         print(f"[ERROR] 图片不存在: {IMAGE_PATH}")
@@ -29,33 +62,150 @@ if __name__ == "__main__":
         print(f"[ERROR] 无法读取图片: {IMAGE_PATH}")
         exit(1)
     
-    print(f"[INFO] 读取图片: {IMAGE_PATH}, 尺寸: {img.shape}")
-    print(f"[INFO] 使用相机内参: \n{K}\n畸变系数: {dist}")
+    print(f"\n[INFO] 读取图片: {IMAGE_PATH}, 尺寸: {img.shape}")
     
-    # 注意：不要覆盖K的cx/cy，应使用实际标定的内参值
-    
-    # =========================
-    # 检测ArUco
-    # =========================
     results = detect_aruco(img, K, dist, MARKER_SIZE, target_id=TARGET_MARKER_ID)
     
     if not results:
-        print("[WARN] 未检测到ArUco码")
-    else:
-        print(f"[INFO] 检测到 {len(results)} 个ArUco码:")
-        for res in results:
-            print(f"  - ID={res.marker_id}")
-            print(f"    center(px): [{res.center[0]:.1f}, {res.center[1]:.1f}]")
-            print(f"    tvec(m):    [{res.tvec[0]:.4f}, {res.tvec[1]:.4f}, {res.tvec[2]:.4f}]")
-            print(f"    rvec(rad):  [{res.rvec[0]:.4f}, {res.rvec[1]:.4f}, {res.rvec[2]:.4f}]")
-            print(f"    T_cam_marker:\n{res.T_cam_marker}")
+        print("[ERROR] 未检测到ArUco码")
+        exit(1)
     
+    target_aruco = results[0]
+    print(f"\n[INFO] 检测到ArUco ID={target_aruco.marker_id}")
+    print(f"  T_optical_marker:\n{target_aruco.T_cam_marker}")
+
     # =========================
-    # 可视化
+    # 可视化ArUco检测结果
     # =========================
     vis = draw_aruco(img, results, K, dist)
-    
     cv2.imshow("ArUco Detection", vis)
-    print("[INFO] 按任意键退出")
+    print("\n[INFO] 按任意键继续...")
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+    
+    # =========================
+    # 坐标变换：optical -> link -> base
+    # =========================
+    T_optical_marker = target_aruco.T_cam_marker
+    T_link_optical = T_optical_to_link()
+    T_camlink_marker = T_link_optical @ T_optical_marker
+    
+    print(f"\n[INFO] T_camlink_marker (marker在相机link坐标系下):\n{T_camlink_marker}")
+    
+    # 分别计算左右臂初始法兰坐标系下的marker位姿
+    T_flange_init_L_marker = T_flange_init_L_camlink @ T_camlink_marker
+    T_flange_init_R_marker = T_flange_init_R_camlink @ T_camlink_marker
+    
+    xyzrpy_flange_init_L_marker_L = T_to_xyzrpy(T_flange_init_L_marker)
+    xyzrpy_flange_init_R_marker_R = T_to_xyzrpy(T_flange_init_R_marker)
+    
+    print(f"\n[INFO] Marker在左臂初始法兰坐标系下的位姿:")
+    print(f"  xyz:  [{xyzrpy_flange_init_L_marker_L[0]:.4f}, {xyzrpy_flange_init_L_marker_L[1]:.4f}, {xyzrpy_flange_init_L_marker_L[2]:.4f}] m")
+    print(f"  rpy:  [{xyzrpy_flange_init_L_marker_L[3]:.4f}, {xyzrpy_flange_init_L_marker_L[4]:.4f}, {xyzrpy_flange_init_L_marker_L[5]:.4f}] rad")
+    
+    print(f"\n[INFO] Marker在右臂初始法兰坐标系下的位姿:")
+    print(f"  xyz:  [{xyzrpy_flange_init_R_marker_R[0]:.4f}, {xyzrpy_flange_init_R_marker_R[1]:.4f}, {xyzrpy_flange_init_R_marker_R[2]:.4f}] m")
+    print(f"  rpy:  [{xyzrpy_flange_init_R_marker_R[3]:.4f}, {xyzrpy_flange_init_R_marker_R[4]:.4f}, {xyzrpy_flange_init_R_marker_R[5]:.4f}] rad")
+    
+    # =========================
+    # 逆运动学求解（左右臂）
+    # =========================
+    print("\n" + "="*50)
+    print("[INFO] 左臂逆运动学求解...")
+    print("="*50)
+    try:
+        ik_joint_angles_L = bimanual.inverse_kinematics(xyzrpy_flange_init_L_marker_L)
+        if ik_joint_angles_L is None:
+            print("[WARN] 左臂逆运动学求解失败")
+            ik_joint_angles_L = None
+        else:
+            print(f"[INFO] 左臂关节角度: {np.round(ik_joint_angles_L, 4)}")
+            fk_result_L = bimanual.forward_kinematics(ik_joint_angles_L)
+            print(f"[INFO] 左臂正运动学验证: {np.round(fk_result_L, 4)}")
+            print(f"[INFO] 左臂位置误差: {np.linalg.norm(fk_result_L[:3] - xyzrpy_flange_init_L_marker_L[:3]):.6f} m")
+    except Exception as e:
+        print(f"[WARN] 左臂逆运动学异常: {e}")
+        ik_joint_angles_L = None
+    
+    print("\n" + "="*50)
+    print("[INFO] 右臂逆运动学求解...")
+    print("="*50)
+    try:
+        ik_joint_angles_R = bimanual.inverse_kinematics(xyzrpy_flange_init_R_marker_R)
+        if ik_joint_angles_R is None:
+            print("[WARN] 右臂逆运动学求解失败")
+            ik_joint_angles_R = None
+        else:
+            print(f"[INFO] 右臂关节角度: {np.round(ik_joint_angles_R, 4)}")
+            fk_result_R = bimanual.forward_kinematics(ik_joint_angles_R)
+            print(f"[INFO] 右臂正运动学验证: {np.round(fk_result_R, 4)}")
+            print(f"[INFO] 右臂位置误差: {np.linalg.norm(fk_result_R[:3] - xyzrpy_flange_init_R_marker_R[:3]):.6f} m")
+    except Exception as e:
+        print(f"[WARN] 右臂逆运动学异常: {e}")
+        ik_joint_angles_R = None
+    
+    # =========================
+    # MuJoCo正运动学验证
+    # =========================
+    print("\n" + "="*50)
+    print("[INFO] 在MuJoCo中验证...")
+    print("="*50)
+    
+    mujoco_left_arm = MujocoSingleArm(XML_PATH, verbose=False)
+    T_world_flange_init_L = mujoco_left_arm.get_body_pose("link6")
+    T_world_cameralink = T_world_flange_init_L @ T_flange_init_L_camlink
+    
+    # 验证左臂
+    if ik_joint_angles_L is not None:
+        print("\n[INFO] 验证左臂...")
+        full_ik_joint_angles_L = np.zeros(8)
+        full_ik_joint_angles_L[:6] = ik_joint_angles_L
+        full_ik_joint_angles_L[6:8] = [0.02, 0.02]
+        
+        mujoco_left_arm.set_joint_angles(full_ik_joint_angles_L)
+        mujoco_left_arm.forward()
+
+        mujoco_left_arm.set_camera_pose("render_camera", T_world_cameralink)
+        mujoco_left_arm.set_camera_fov("render_camera", v_fov)
+        
+        # 设置目标marker位置（用于debug）
+        T_world_marker_L = T_world_cameralink @ T_camlink_marker
+        mujoco_left_arm.set_target_marker(T_world_marker_L)
+        
+        mujoco_left_arm.forward()
+        
+        T_world_flange_L = mujoco_left_arm.get_body_pose("link6")  # link6为Flange, ARX的正逆解都是基于Flange的
+        xyzrpy_world_flange_L = T_to_xyzrpy(T_world_flange_L)
+        rgb, mask = mujoco_left_arm.render("render_camera", 640, 480, with_mask=True)
+        
+        print(f"  MuJoCo link6位姿:")
+        print(f"    xyz:  [{xyzrpy_world_flange_L[0]:.4f}, {xyzrpy_world_flange_L[1]:.4f}, {xyzrpy_world_flange_L[2]:.4f}] m")
+        print(f"    rpy:  [{xyzrpy_world_flange_L[3]:.4f}, {xyzrpy_world_flange_L[4]:.4f}, {xyzrpy_world_flange_L[5]:.4f}] rad")
+        print(f"  Mujoco target marker位姿态:")
+        T_world_marker_L = T_world_cameralink @ T_camlink_marker
+        xyzrpy_world_marker_L = T_to_xyzrpy(T_world_marker_L)
+        print(f"    xyz:  [{xyzrpy_world_marker_L[0]:.4f}, {xyzrpy_world_marker_L[1]:.4f}, {xyzrpy_world_marker_L[2]:.4f}] m")
+        print(f"    rpy:  [{xyzrpy_world_marker_L[3]:.4f}, {xyzrpy_world_marker_L[4]:.4f}, {xyzrpy_world_marker_L[5]:.4f}] rad")
+        error_xyz_L = np.linalg.norm(xyzrpy_world_flange_L[:3] - xyzrpy_world_marker_L[:3])
+        print(f"  位置误差: {error_xyz_L:.6f} m")
+        error_rpy_L = np.linalg.norm(xyzrpy_world_flange_L[3:] - xyzrpy_world_marker_L[3:])
+        print(f"  姿态误差: {error_rpy_L:.6f} rad")
+        # 将Mask&RGB，并贴回原图显示
+        mask_3ch = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+        vis_combined = img.copy()
+        vis_combined[mask_3ch > 0] = rgb[mask_3ch > 0]
+        cv2.imshow("RGB", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        cv2.imshow("Mask", mask)
+        cv2.imshow("Combined Visualization", vis_combined)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    
+
+
+    mujoco_right_arm = MujocoSingleArm(XML_PATH, verbose=False)
+    T_world_flange_init_R = mujoco_right_arm.get_body_pose("link6")
+    T_world_cameralink_R = T_world_flange_init_R @ T_flange_init_R_camlink
+    
+    # 启动viewer（使用最后验证的关节角度）
+    print("\n[INFO] 启动MuJoCo Viewer...")
+    mujoco_left_arm.spin()
