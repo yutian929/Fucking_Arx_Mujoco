@@ -36,7 +36,7 @@ class Real2Sim:
     """
     
     # 夹爪相对于法兰盘的偏移（在法兰盘坐标系下，X轴方向）
-    GRIPPER_OFFSET = np.array([0.15, 0.0, 0.0])
+    GRIPPER_OFFSET = np.array([0.16, 0.0, 0.0])
     
     def __init__(
         self,

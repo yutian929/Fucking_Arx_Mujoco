@@ -62,7 +62,7 @@ if __name__ == "__main__":
     USE_REAL_ARM = True
     CAN_PORT = "can1"
     MAX_VEL, MAX_ACC = 100, 300
-    DEFAULT_GRIPPER_WIDTH = 30.0
+    DEFAULT_GRIPPER_WIDTH = 0.040  # m
     
     # 加载参数
     _, K, dist, v_fov = load_camera_intrinsics(INTRINSICS_PATH)

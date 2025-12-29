@@ -27,7 +27,7 @@ DEFAULT_GRIPPER_CALIBRATION = {
 }
 
 # 夹爪偏移（末端执行器相对于法兰盘，在法兰盘X轴方向）
-GRIPPER_OFFSET = np.array([0.15, 0.0, 0.0])
+GRIPPER_OFFSET = np.array([0.16, 0.0, 0.0])
 
 
 class RealSingleArm:
@@ -177,12 +177,12 @@ class RealSingleArm:
         T_flange_init_flange = self.gripper_to_flange(T_flange_init_gripper)
         self.set_flange_pose(T_flange_init_flange)
     
-    def set_gripper_width(self, width_mm: float):
-        """设置夹爪宽度 (真实宽度mm)"""
-        set_val = self._real_to_set_width(width_mm)
+    def set_gripper_width(self, width_m: float):
+        """设置夹爪宽度 (真实宽度m)"""
+        set_val = self._real_to_set_width(width_m * 1000)  # 转为mm
         self.arm.set_catch_pos(set_val)
     
-    def move_to(self, T_flange_init_ee: np.ndarray, gripper_width_mm: float = 30.0, 
+    def move_to(self, T_flange_init_ee: np.ndarray, gripper_width_m: float = 0.030, 
                 is_gripper_pose: bool = True):
         """
         移动到目标位姿
@@ -196,7 +196,7 @@ class RealSingleArm:
             self.set_gripper_pose(T_flange_init_ee)
         else:
             self.set_flange_pose(T_flange_init_ee)
-        self.set_gripper_width(gripper_width_mm)
+        self.set_gripper_width(gripper_width_m)
     
     def execute_trajectory(self, poses: List[np.ndarray], 
                            gripper_widths: Optional[List[float]] = None,
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     target[:3, 3] = [0.3, 0.0, 0.15]
     
     print("Moving to target (slow)...")
-    arm.move_to(target, gripper_width_mm=40.0, is_gripper_pose=True)
+    arm.move_to(target, gripper_width_m=0.040, is_gripper_pose=True)
     time.sleep(10)
     
     arm.go_home()
