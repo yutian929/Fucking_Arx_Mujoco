@@ -19,11 +19,11 @@ from bimanual import SingleArm
 
 # 默认夹爪校准数据
 DEFAULT_GRIPPER_CALIBRATION = {
-    "-1.0": {"mean": 0.0}, "-0.5": {"mean": 0.0}, "0.0": {"mean": 0.0},
-    "0.5": {"mean": 4.0}, "1.0": {"mean": 12.5}, "1.5": {"mean": 20.5},
-    "2.0": {"mean": 30.0}, "2.5": {"mean": 38.5}, "3.0": {"mean": 47.5},
-    "3.5": {"mean": 56.5}, "4.0": {"mean": 65.0}, "4.5": {"mean": 73.5},
-    "5.0": {"mean": 82.0}
+    -1.0: {"mean": 0.0}, -0.5: {"mean": 0.0}, 0.0: {"mean": 0.0},
+    0.5: {"mean": 4.0}, 1.0: {"mean": 12.5}, 1.5: {"mean": 20.5},
+    2.0: {"mean": 30.0}, 2.5: {"mean": 38.5}, 3.0: {"mean": 47.5},
+    3.5: {"mean": 56.5}, 4.0: {"mean": 65.0}, 4.5: {"mean": 73.5},
+    5.0: {"mean": 82.0}
 }
 
 # 夹爪偏移（末端执行器相对于法兰盘，在法兰盘X轴方向）
@@ -140,6 +140,39 @@ class RealSingleArm:
         """回零位"""
         self.arm.go_home()
     
+    def get_joint_positions(self) -> np.ndarray:
+        """获取当前关节位置 (弧度)，Shape: (7,)->(6,)"""
+        return self.arm.get_joint_positions()[:6]
+    
+    def get_gripper_width(self, teacher=False) -> float:
+        """
+        获取当前夹爪宽度 (单位: 米)
+        gripper_joint为电机位置，需通过calib_points线性插值得到实际宽度
+        """
+        gripper_joint = self.arm.get_joint_positions()[6]
+        pts = self.calib_points
+        # pts: List of (real_mm, set_val)
+        # 反向插值: 已知set_val, 求real_mm
+        if not pts:
+            return gripper_joint / 1000.0  # fallback
+        pts = sorted(pts, key=lambda x: x[1])  # 按set_val排序
+        if gripper_joint <= pts[0][1]:
+            width_mm = pts[0][0]
+        elif gripper_joint >= pts[-1][1]:
+            width_mm = pts[-1][0]
+        else:
+            for i in range(len(pts) - 1):
+                r1, s1 = pts[i]
+                r2, s2 = pts[i + 1]
+                if s1 <= gripper_joint <= s2 and abs(s2 - s1) > 1e-6:
+                    width_mm = r1 + (gripper_joint - s1) / (s2 - s1) * (r2 - r1)
+                    break
+            else:
+                width_mm = pts[-1][0]
+        if teacher:
+            width_mm = width_mm*0.082/0.016  # 教师臂特殊处理
+        return width_mm / 1000.0  # 返回米
+    
     def get_flange_pose(self) -> np.ndarray:
         """
         获取当前法兰盘位姿 (4x4)
@@ -156,6 +189,15 @@ class RealSingleArm:
         return self.flange_to_gripper(self.get_flange_pose())
     
     # ==================== 位姿控制 ====================
+
+    def set_joint_positions(self, positions: np.ndarray):
+        """
+        设置关节位置
+        
+        Args:
+            positions: 目标关节位置 (弧度)，Shape: (6,)
+        """
+        self.arm.set_joint_positions(positions)
     
     def set_flange_pose(self, T_flange_init_flange: np.ndarray):
         """
@@ -232,19 +274,16 @@ class RealSingleArm:
 
 if __name__ == "__main__":
     # 使用较慢的速度初始化
-    arm = RealSingleArm(can_port='can1', max_velocity=100, max_acceleration=300)
+    arm = RealSingleArm(can_port='can2', max_velocity=100, max_acceleration=300)
+    print("进入重力补偿模式...")
+    arm.arm.gravity_compensation()
+    print("开始读取夹爪宽度 (mm)，按 Ctrl+C 退出")
+    try:
+        while True:
+            width = arm.get_gripper_width()
+            print(f"Gripper width: {width:.4f} m", end='\r')
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        print("\n退出。")
     
-    print("Current flange pose (T_flange_init_flange):\n", arm.get_flange_pose())
-    
-    # 测试前可以再降低速度
-    arm.set_speed(100, 300)  # 非常慢
-    
-    target = np.eye(4)
-    target[:3, 3] = [0.3, 0.0, 0.15]
-    
-    print("Moving to target (slow)...")
-    arm.move_to(target, gripper_width_m=0.040, is_gripper_pose=True)
-    time.sleep(10)
-    
-    arm.go_home()
-    time.sleep(5)
+    # 从臂都是0.082， 主臂can0却0.016
